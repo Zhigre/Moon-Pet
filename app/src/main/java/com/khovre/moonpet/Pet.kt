@@ -36,6 +36,7 @@ object Pet {
     private var prevM = 0f; private var gx = 0f
     private var t = 0f
     private var px = 0f; private var pz = 0f; private var pvz = 0f
+    private var beh = 0; private var bt = 0f; private var spdM = 1f
     private var pd = .6f; private var td = -1f; private var fx = 0f; private var fb = 1f
     private var tx = -1f; private var act = 2f; private var blink = 3f
     private var look = 0f; private var up = 0f; private var dizzy = 0f; private var eat = 0f; private var stepD = 0f
@@ -169,6 +170,16 @@ object Pet {
             if (shake > .85f && sleeping) { sleeping = false; joy = max(0f, joy - 10f) }
         }
         dizzy = max(0f, dizzy - dt); eat = max(0f, eat - dt); up = max(0f, up - dt)
+        if (dizzy > 0f) beh = 0
+        if (beh != 0 && !sleeping) {
+            bt -= dt; if (bt <= 0f) { beh = 0; spdM = 1f }
+            when (beh) {
+                3 -> { if (pz <= 0f && pvz <= 0f) pvz = 170f * k; joy = min(100f, joy + dt * 3f); if (rnd.nextFloat() < dt * 3f) emoji("🎵", px + (rnd.nextFloat() - .5f) * rr * 2f, gy - rr * 2f, 0f, -45f * k, 1.2f, 18f) }
+                5 -> { joy = min(100f, joy + dt); if (rnd.nextFloat() < dt * 25f) parts.add(Part(px + (rnd.nextFloat() - .5f) * rr, gy, (rnd.nextFloat() - .5f) * 70f * k, -60f * k, 200f * k, .8f, .8f, null, (1.5f + rnd.nextFloat() * 2f) * k)); if (rnd.nextFloat() < dt * .25f) { emoji("💎", px, gy - rr * 1.2f, 0f, -70f * k, 1.5f, 24f, 60f * k); joy = min(100f, joy + 5f) } }
+                2 -> { energy = min(100f, energy + dt * .3f) }
+                4 -> { up = 1f }
+            }
+        }
         // meteors
         nextMeteor -= dt
         if (nextMeteor <= 0f) { nextMeteor = 15f + rnd.nextFloat() * 25f; mets.add(mkMeteor()) }
@@ -183,25 +194,30 @@ object Pet {
             act -= dt; blink -= dt; if (blink < -.12f) blink = 2f + rnd.nextFloat() * 3f
             val f = foods.firstOrNull { it.landed }
             val b = ball
-            if (f != null) { tx = f.x; td = f.d }
-            else if (b != null) { tx = b.x; td = b.d }
+            if (f != null) { tx = f.x; td = f.d; beh = 0; spdM = 1.6f }
+            else if (b != null) { tx = b.x; td = b.d; beh = 0; spdM = 1.8f }
             else if (act <= 0f && dizzy <= 0f) {
-                act = 2f + rnd.nextFloat() * 4f
-                val q = rnd.nextFloat()
-                if (q < .6f) { tx = W * .12f + rnd.nextFloat() * W * .76f; td = .05f + rnd.nextFloat() * .95f }
-                else if (q < .75f && mood > 45f && pz <= 0f) pvz = 260f * k
+                act = 1.2f + rnd.nextFloat() * 3f
+                val q = rnd.nextFloat(); spdM = 1f; beh = 0
+                if (q < .3f) { tx = W * .12f + rnd.nextFloat() * W * .76f; td = .05f + rnd.nextFloat() * .95f }
+                else if (q < .5f) { tx = W * .12f + rnd.nextFloat() * W * .76f; td = .05f + rnd.nextFloat() * .95f; spdM = 2.3f }
+                else if (q < .6f && mood > 40f && pz <= 0f) pvz = 260f * k
+                else if (q < .7f) { beh = 2; bt = 2f + rnd.nextFloat() * 2f; act = bt; tx = -1f }
+                else if (q < .8f && mood > 45f) { beh = 3; bt = 2.5f; act = bt; tx = -1f }
+                else if (q < .88f) { beh = 4; bt = 2f; act = bt; tx = -1f }
+                else if (q < .95f) { beh = 5; bt = 2.5f; act = bt; tx = -1f }
                 else tx = -1f
                 look = (rnd.nextFloat() - .5f) * 2f
             }
             var mvx = 0f; var mvd = 0f
             if (tx >= 0f && dizzy <= 0f) {
                 val dx = tx - px; val dd = td - pd
-                val sp = (if (energy > 20f) 70f else 35f) * k * (if (mood < 30f) .7f else 1f)
+                val sp = (if (energy > 20f) 130f else 60f) * k * spdM * (if (mood < 30f) .7f else 1f)
                 val nx = abs(dx) > 5f * k; val nd = abs(dd) > .03f
                 if (!nx && !nd) tx = -1f
                 else {
                     if (nx) { val st = sign(dx) * sp * scAt(pd) * dt; px += st; look = sign(dx); mvx = sign(dx); stepD += abs(st) }
-                    if (nd) { pd += sign(dd) * .22f * dt * (sp / (70f * k)); mvd = sign(dd) }
+                    if (nd) { pd += sign(dd) * .3f * dt * (sp / (130f * k)); mvd = sign(dd) }
                     pd = pd.coerceIn(0f, 1f)
                     if (stepD > 26f * k * scAt(pd)) { stepD = 0f; prints.add(Print(px, gy + (if (prints.size % 2 == 0) -2f else 6f) * k * scAt(pd), 1f)); if (prints.size > 40) prints.removeAt(0) }
                 }
@@ -328,7 +344,9 @@ object Pet {
         c.save(); c.translate(x + shiver, y)
         var sq = 1f + sin(t * (if (sl) 1.5f else 3.2f)) * (if (sl) .05f else .03f)
         if (pz > 0f) sq = 1f + (pvz / (900f * k)).coerceIn(-.15f, .15f)
-        c.rotate(Math.toDegrees((if (dizzy > 0f) sin(t * 14f) * .14f else tilt * .06f).toDouble()).toFloat())
+        c.rotate(Math.toDegrees((if (dizzy > 0f) sin(t * 14f) * .14f else if (beh == 3) sin(t * 9f) * .28f else tilt * .06f + fx * .05f).toDouble()).toFloat())
+        if (beh == 2) sq = .82f + sin(t * 2f) * .02f
+        if (beh == 5) sq = .88f + abs(sin(t * 9f)) * .1f
         c.scale(1f / sq, sq)
         val green = 0xFF2F8F78.toInt()
         for (s in SIDES) { rf.set(s * r * .42f - r * .28f, -r * .22f, s * r * .42f + r * .28f, -r * .06f); c.drawOval(rf, pt(green)) }
