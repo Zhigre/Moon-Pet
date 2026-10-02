@@ -45,6 +45,7 @@ class MoonWallpaperService : WallpaperService() {
         override fun onVisibilityChanged(v: Boolean) {
             visible = v
             Pet.visible = v
+            Pet.onVis?.invoke(v)
             if (v) {
                 Pet.onShow(); readPower()
                 sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let { sm.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
@@ -58,7 +59,7 @@ class MoonWallpaperService : WallpaperService() {
         }
 
         override fun onDestroy() {
-            visible = false; Pet.visible = false
+            visible = false; Pet.visible = false; Pet.onVis?.invoke(false)
             handler.removeCallbacks(frame); sm.unregisterListener(this)
             Pet.save(applicationContext)
             super.onDestroy()

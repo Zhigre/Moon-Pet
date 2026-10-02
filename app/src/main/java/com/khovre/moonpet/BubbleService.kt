@@ -69,6 +69,8 @@ class BubbleService : Service() {
             }
         }
         wm.addView(bv, blp); bubble = bv
+        bv.visibility = if (Pet.visible) View.VISIBLE else View.GONE
+        Pet.onVis = { v -> bubble?.visibility = if (v) View.VISIBLE else View.GONE; if (!v) closeMenu() }
     }
 
     private fun toggleMenu() { if (menu != null) closeMenu() else openMenu() }
@@ -99,11 +101,13 @@ class BubbleService : Service() {
             y = blp.y.coerceIn(0, maxOf(0, sh - mh - dp(24)))
         }
         wm.addView(col, lp); menu = col
+        Pet.menuRight = blp.x + size / 2 > sw / 2; Pet.menuOpen = true
     }
 
-    private fun closeMenu() { menu?.let { try { wm.removeView(it) } catch (e: Exception) {} }; menu = null }
+    private fun closeMenu() { menu?.let { try { wm.removeView(it) } catch (e: Exception) {} }; menu = null; Pet.menuOpen = false }
 
     override fun onDestroy() {
+        Pet.onVis = null
         closeMenu()
         bubble?.let { try { wm.removeView(it) } catch (e: Exception) {} }
         bubble = null
