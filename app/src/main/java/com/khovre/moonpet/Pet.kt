@@ -37,6 +37,9 @@ object Pet {
     private var t = 0f
     private var px = 0f; private var pz = 0f; private var pvz = 0f
     private var beh = 0; private var bt = 0f; private var spdM = 1f
+    private var zt = 0f; private var moving = false; private var critT = 6f; private var ufoT = 50f
+    var gems = 0
+    private var lastCare = System.currentTimeMillis()
     private var pd = .6f; private var td = -1f; private var fx = 0f; private var fb = 1f
     private var tx = -1f; private var act = 2f; private var blink = 3f
     private var look = 0f; private var up = 0f; private var dizzy = 0f; private var eat = 0f; private var stepD = 0f
@@ -48,11 +51,15 @@ object Pet {
     class Part(var x: Float, var y: Float, var vx: Float, var vy: Float, val g: Float, var life: Float, val max: Float, val ch: String?, val s: Float)
     class Met(var x: Float, var y: Float, val vx: Float, val vy: Float, var life: Float) { var seen = false }
     class Print(val x: Float, val y: Float, var a: Float)
+    class Crit(var x: Float, val d: Float, val gold: Boolean) { var st = 0; var t = 0f; var dir = 0 }
+    class Ufo(var x: Float, val y: Float, val vx: Float, val will: Boolean) { var gift = false }
     private val foods = ArrayList<Food>()
     private var ball: Ball? = null
     private val parts = ArrayList<Part>()
     private val mets = ArrayList<Met>()
     private val prints = ArrayList<Print>()
+    private val crits = ArrayList<Crit>()
+    private var ufo: Ufo? = null
 
     // ---- persistence ----
     fun load(c: Context) {
@@ -63,7 +70,7 @@ object Pet {
         energy = s.getFloat("en", 80f); clean = s.getFloat("cl", 80f)
         born = s.getLong("born", System.currentTimeMillis())
         lastTick = s.getLong("t", System.currentTimeMillis())
-        sleeping = s.getBoolean("sl", false)
+        sleeping = s.getBoolean("sl", false); gems = s.getInt("gems", 0)
         name = s.getString("name", "Blip") ?: "Blip"
         bmp = try { c.assets.open("moon.jpg").use { BitmapFactory.decodeStream(it) } } catch (e: Exception) { null }
         catchUp()
@@ -73,7 +80,7 @@ object Pet {
         c.getSharedPreferences("pet", 0).edit()
             .putFloat("hu", hunger).putFloat("jo", joy).putFloat("en", energy).putFloat("cl", clean)
             .putLong("born", born).putLong("t", System.currentTimeMillis())
-            .putBoolean("sl", sleeping).putString("name", name).apply()
+            .putBoolean("sl", sleeping).putInt("gems", gems).putString("name", name).apply()
     }
 
     /** Time passed while the wallpaper wasn't being drawn: age the pet gently. */
@@ -105,27 +112,31 @@ object Pet {
 
     // ---- actions (called from the bubble menu) ----
     fun feed() {
+        lastCare = System.currentTimeMillis()
         sleeping = false
         if (visible) foods.add(Food((px + (rnd.nextFloat() - .5f) * W * .5f).coerceIn(30f * sc, W - 30f * sc), -20f * sc, .2f + rnd.nextFloat() * .8f))
         else { hunger = min(100f, hunger + 25f); joy = min(100f, joy + 3f) }
     }
     fun pet() {
+        lastCare = System.currentTimeMillis(); beh = 0
         sleeping = false; joy = min(100f, joy + 6f)
         if (visible) { hearts(3); if (pz <= 0f) pvz = 230f * sc }
     }
     fun play() {
+        lastCare = System.currentTimeMillis()
         sleeping = false
         if (visible) { val left = rnd.nextBoolean(); ball = Ball(if (left) 30f * sc else W - 30f * sc, 60f * sc, if (left) 120f * sc else -120f * sc, 200f * sc, 25f, .3f + rnd.nextFloat() * .7f) }
         else { joy = min(100f, joy + 12f); energy = max(0f, energy - 4f) }
     }
     fun groom() {
+        lastCare = System.currentTimeMillis()
         sleeping = false; clean = 100f; joy = min(100f, joy + 4f)
         if (visible) {
             repeat(9) { emoji("🫧", px + (rnd.nextFloat() - .5f) * rr * 1.6f, gy - rr * (.3f + rnd.nextFloat() * 1.5f), (rnd.nextFloat() - .5f) * 30f * sc, -40f * sc, 1.4f, 18f) }
             if (pz <= 0f) pvz = 200f * sc
         }
     }
-    fun toggleSleep() { sleeping = !sleeping }
+    fun toggleSleep() { sleeping = !sleeping; lastCare = System.currentTimeMillis() }
     fun greet() { if (sleeping) return; joy = min(100f, joy + 3f); if (pz <= 0f) pvz = 220f * sc; look = 0f; hearts(2) }
     fun tap(x: Float, y: Float) {
         if (abs(x - px) < rr * 1.1f && y > gy - pz - rr * 2.2f && y < gy + rr * .3f) pet()
@@ -133,7 +144,7 @@ object Pet {
     }
     fun status(): String {
         val days = 1 + (System.currentTimeMillis() - born) / 86400000L
-        return "$name · day $days\nFood ${hunger.toInt()}%  Joy ${joy.toInt()}%\nEnergy ${energy.toInt()}%  Clean ${clean.toInt()}%"
+        return "$name · day $days\nFood ${hunger.toInt()}%  Joy ${joy.toInt()}%\nEnergy ${energy.toInt()}%  Clean ${clean.toInt()}%\n💎 $gems"
     }
 
     private fun hearts(n: Int) = repeat(n) { emoji("❤️", px + (rnd.nextFloat() - .5f) * rr * 1.6f, gy - pz - rr * 2f, (rnd.nextFloat() - .5f) * 20f * sc, -50f * sc, 1.4f, 20f) }
@@ -172,12 +183,18 @@ object Pet {
         dizzy = max(0f, dizzy - dt); eat = max(0f, eat - dt); up = max(0f, up - dt)
         if (dizzy > 0f) beh = 0
         if (beh != 0 && !sleeping) {
-            bt -= dt; if (bt <= 0f) { beh = 0; spdM = 1f }
+            bt -= dt; if (bt <= 0f) { if (beh == 6) { dizzy = 1.5f; tx = -1f }; beh = 0; spdM = 1f }
             when (beh) {
                 3 -> { if (pz <= 0f && pvz <= 0f) pvz = 170f * k; joy = min(100f, joy + dt * 3f); if (rnd.nextFloat() < dt * 3f) emoji("🎵", px + (rnd.nextFloat() - .5f) * rr * 2f, gy - rr * 2f, 0f, -45f * k, 1.2f, 18f) }
-                5 -> { joy = min(100f, joy + dt); if (rnd.nextFloat() < dt * 25f) parts.add(Part(px + (rnd.nextFloat() - .5f) * rr, gy, (rnd.nextFloat() - .5f) * 70f * k, -60f * k, 200f * k, .8f, .8f, null, (1.5f + rnd.nextFloat() * 2f) * k)); if (rnd.nextFloat() < dt * .25f) { emoji("💎", px, gy - rr * 1.2f, 0f, -70f * k, 1.5f, 24f, 60f * k); joy = min(100f, joy + 5f) } }
+                5 -> { joy = min(100f, joy + dt); if (rnd.nextFloat() < dt * 25f) parts.add(Part(px + (rnd.nextFloat() - .5f) * rr, gy, (rnd.nextFloat() - .5f) * 70f * k, -60f * k, 200f * k, .8f, .8f, null, (1.5f + rnd.nextFloat() * 2f) * k)); if (rnd.nextFloat() < dt * .25f) { emoji("💎", px, gy - rr * 1.2f, 0f, -70f * k, 1.5f, 24f, 60f * k); joy = min(100f, joy + 5f); gems++ } }
                 2 -> { energy = min(100f, energy + dt * .3f) }
                 4 -> { up = 1f }
+                6 -> { zt -= dt; if (zt <= 0f) { zt = .45f; tx = W * .1f + rnd.nextFloat() * W * .8f; td = rnd.nextFloat(); spdM = 3.5f } }
+                7 -> { if (tx < 0f) { beh = 8; bt = 6f; act = bt } }
+                8 -> { energy = min(100f, energy + dt * 3f) }
+                9 -> { clean = max(0f, clean - dt * 12f); joy = min(100f, joy + dt * 2f); if (rnd.nextFloat() < dt * 30f) parts.add(Part(px + (rnd.nextFloat() - .5f) * rr * 2f, gy, (rnd.nextFloat() - .5f) * 80f * k, -50f * k, 180f * k, .9f, .9f, null, (1.5f + rnd.nextFloat() * 2f) * k)) }
+                10 -> { up = 1f; if (rnd.nextFloat() < dt * 1.5f) hearts(1) }
+                11 -> { if (rnd.nextFloat() < dt * 4f) { prints.add(Print(px + (rnd.nextFloat() - .5f) * rr * 2.5f, gy + rnd.nextFloat() * 8f * k, 1f)); if (prints.size > 40) prints.removeAt(0) }; joy = max(0f, joy - dt * .5f) }
             }
         }
         // meteors
@@ -194,18 +211,26 @@ object Pet {
             act -= dt; blink -= dt; if (blink < -.12f) blink = 2f + rnd.nextFloat() * 3f
             val f = foods.firstOrNull { it.landed }
             val b = ball
+            val cr = crits.firstOrNull { it.st == 1 || it.st == 2 }
             if (f != null) { tx = f.x; td = f.d; beh = 0; spdM = 1.6f }
             else if (b != null) { tx = b.x; td = b.d; beh = 0; spdM = 1.8f }
+            else if (cr != null && dizzy <= 0f) { tx = cr.x; td = cr.d; beh = 0; spdM = 2.4f }
             else if (act <= 0f && dizzy <= 0f) {
                 act = 1.2f + rnd.nextFloat() * 3f
                 val q = rnd.nextFloat(); spdM = 1f; beh = 0
-                if (q < .3f) { tx = W * .12f + rnd.nextFloat() * W * .76f; td = .05f + rnd.nextFloat() * .95f }
-                else if (q < .5f) { tx = W * .12f + rnd.nextFloat() * W * .76f; td = .05f + rnd.nextFloat() * .95f; spdM = 2.3f }
-                else if (q < .6f && mood > 40f && pz <= 0f) pvz = 260f * k
-                else if (q < .7f) { beh = 2; bt = 2f + rnd.nextFloat() * 2f; act = bt; tx = -1f }
-                else if (q < .8f && mood > 45f) { beh = 3; bt = 2.5f; act = bt; tx = -1f }
-                else if (q < .88f) { beh = 4; bt = 2f; act = bt; tx = -1f }
-                else if (q < .95f) { beh = 5; bt = 2.5f; act = bt; tx = -1f }
+                val wx = W * .12f + rnd.nextFloat() * W * .76f; val wd = .05f + rnd.nextFloat() * .95f
+                if (q < .2f) { tx = wx; td = wd }
+                else if (q < .34f) { tx = wx; td = wd; spdM = 2.3f }
+                else if (q < .4f && mood > 40f && pz <= 0f) pvz = 260f * k
+                else if (q < .47f) { beh = 2; bt = 2f + rnd.nextFloat() * 2f; act = bt; tx = -1f }
+                else if (q < .55f && mood > 45f) { beh = 3; bt = 2.5f; act = bt; tx = -1f }
+                else if (q < .6f) { beh = 4; bt = 2f; act = bt; tx = -1f }
+                else if (q < .66f) { beh = 5; bt = 2.5f; act = bt; tx = -1f }
+                else if (q < .72f && energy > 30f) { beh = 6; bt = 3f; act = bt; zt = 0f; tx = -1f }
+                else if (q < .77f) { beh = 7; bt = 14f; act = bt; tx = wx; td = wd }
+                else if (q < .82f) { beh = 9; bt = 3f; act = bt; tx = -1f }
+                else if (q < .87f) { beh = 10; bt = 3f; act = bt; tx = -1f }
+                else if (q < .92f && System.currentTimeMillis() - lastCare > 1_200_000L) { beh = 11; bt = 8f; act = bt; tx = -1f }
                 else tx = -1f
                 look = (rnd.nextFloat() - .5f) * 2f
             }
@@ -222,8 +247,9 @@ object Pet {
                     if (stepD > 26f * k * scAt(pd)) { stepD = 0f; prints.add(Print(px, gy + (if (prints.size % 2 == 0) -2f else 6f) * k * scAt(pd), 1f)); if (prints.size > 40) prints.removeAt(0) }
                 }
             }
+            moving = mvx != 0f || mvd != 0f
             fx += (mvx - fx) * min(1f, dt * 6f)
-            fb += ((if (mvd != 0f && mvx == 0f) mvd else 1f) - fb) * min(1f, dt * 6f)
+            fb += ((if (beh == 11) -1f else if (mvd != 0f && mvx == 0f) mvd else 1f) - fb) * min(1f, dt * 6f)
             px = (px + tilt * 45f * k * dt).coerceIn(rr, W - rr)
             if (f != null && abs(f.x - px) < rr * .7f && abs(f.d - pd) < .12f) {
                 foods.remove(f); hunger = min(100f, hunger + 25f); joy = min(100f, joy + 3f); eat = 1.2f; tx = -1f
@@ -244,6 +270,44 @@ object Pet {
                 joy = min(100f, joy + 6f); energy = max(0f, energy - 2f); if (pz <= 0f) pvz = 180f * k; hearts(1)
             }
             if (b.life <= 0f) ball = null
+        }
+        // moon critters
+        critT -= dt
+        if (critT <= 0f && crits.size < 2 && !sleeping) { critT = 7f + rnd.nextFloat() * 12f; crits.add(Crit(W * .1f + rnd.nextFloat() * W * .8f, .05f + rnd.nextFloat() * .95f, rnd.nextFloat() < .12f)) }
+        val ci = crits.iterator()
+        while (ci.hasNext()) {
+            val cr = ci.next(); cr.t += dt
+            when (cr.st) {
+                0 -> { if (cr.t > .6f) { cr.st = 1; cr.t = 0f } }
+                1 -> {
+                    cr.x += sin(t * 3f + cr.d * 10f) * 12f * k * dt
+                    val dxp = cr.x - px
+                    if (cr.t > 8f) { cr.st = 3; cr.t = 0f }
+                    else if (!sleeping && abs(dxp) < 200f * k * scAt(cr.d) && abs(cr.d - pd) < .25f) { cr.st = 2; cr.t = 0f; cr.dir = if (dxp >= 0f) 1 else -1 }
+                }
+                2 -> { cr.x += cr.dir * 190f * k * scAt(cr.d) * dt
+                    if (cr.t > 1.4f || cr.x < 20f * k || cr.x > W - 20f * k) { cr.st = 3; cr.t = 0f; if (!sleeping && abs(cr.x - px) < 500f * k) emoji("❓", px, gy - rr * 2.4f, 0f, -40f * k, 1.2f, 22f) } }
+                3 -> { if (cr.t > .5f) { ci.remove(); continue } }
+            }
+            if (!sleeping && dizzy <= 0f && (cr.st == 1 || cr.st == 2) && abs(cr.x - px) < rr * .65f && abs(cr.d - pd) < .1f) {
+                ci.remove(); val g = cr.gold
+                hunger = min(100f, hunger + (if (g) 30f else 15f)); joy = min(100f, joy + (if (g) 15f else 8f)); if (g) gems++
+                eat = 1.2f; tx = -1f; spdM = 1f
+                repeat(6) { emoji("✨", px, gy - rr * .9f, (rnd.nextFloat() - .5f) * 90f * k, (-70f - rnd.nextFloat() * 50f) * k, .9f, 14f, 200f * k) }
+            }
+        }
+        // UFO visitor
+        ufoT -= dt
+        if (ufoT <= 0f && ufo == null && !sleeping) {
+            ufoT = 70f + rnd.nextFloat() * 60f; val l = rnd.nextBoolean()
+            ufo = Ufo(if (l) -40f * k else W + 40f * k, H * (.25f + rnd.nextFloat() * .15f), (if (l) 1f else -1f) * 150f * k, rnd.nextFloat() < .4f)
+            if (dizzy <= 0f) { beh = 10; bt = 4f; act = bt; tx = -1f }
+        }
+        val u = ufo
+        if (u != null) {
+            u.x += u.vx * dt
+            if (u.will && !u.gift && abs(u.x - W / 2f) < 30f * k) { u.gift = true; foods.add(Food(u.x, u.y, .2f + rnd.nextFloat() * .8f)) }
+            if (u.x < -80f * k || u.x > W + 80f * k) ufo = null
         }
         // particles / footprints
         val pi = parts.iterator()
@@ -299,6 +363,30 @@ object Pet {
         c.drawCircle(b.x, by, 12f * k, pt(Color.WHITE).also { it.shader = RadialGradient(b.x - 4f * k, by - 4f * k, 12f * k, 0xFFFFF6A8.toInt(), 0xFFE0A020.toInt(), Shader.TileMode.CLAMP) })
     }
 
+    private fun drawCrit(c: Canvas, cr: Crit) {
+        val s = sc * scAt(cr.d); val g0 = yAt(cr.d)
+        val hs = (if (cr.st == 0) cr.t / .6f else if (cr.st == 3) 1f - cr.t / .5f else 1f).coerceIn(0f, 1f)
+        rf.set(cr.x - 22f * s, g0 - 5f * s, cr.x + 22f * s, g0 + 7f * s); c.drawOval(rf, pt(Color.argb(150, 25, 20, 18)))
+        rf.set(cr.x - 26f * s, g0 - 7f * s, cr.x + 26f * s, g0 + 9f * s); c.drawArc(rf, 190f, 160f, false, pt(Color.argb(110, 220, 205, 185), Paint.Style.STROKE, 2f * s))
+        if (hs > .05f) {
+            val w = 14f * s * hs; val bob = sin(t * 14f + cr.x) * 2f * s
+            rf.set(cr.x - w, g0 - 26f * s * hs + bob, cr.x + w, g0 - 2f * s); c.drawOval(rf, pt((if (cr.gold) 0xFFFFD84A else 0xFF9A78C8).toInt()))
+            val lk = sign(px - cr.x) * 1.2f * s
+            for (e in SIDES) {
+                c.drawCircle(cr.x + e * w * .4f, g0 - 17f * s * hs + bob, 3.4f * s * hs, pt(Color.WHITE))
+                c.drawCircle(cr.x + e * w * .4f + lk, g0 - 17f * s * hs + bob, 1.6f * s * hs, pt(0xFF0C1A1A.toInt()))
+            }
+        }
+    }
+    private fun drawUfo(c: Canvas) {
+        val u = ufo ?: return
+        val s = 30f * sc
+        c.drawCircle(u.x, u.y, s * 1.6f, pt(Color.argb(30, 150, 255, 200)))
+        rf.set(u.x - s, u.y - s * .25f, u.x + s, u.y + s * .25f); c.drawOval(rf, pt(0xFFB8C4D0.toInt()))
+        rf.set(u.x - s * .45f, u.y - s * .6f, u.x + s * .45f, u.y + s * .1f); c.drawArc(rf, 180f, 180f, true, pt(Color.argb(200, 140, 230, 255)))
+        for (i in -1..1) c.drawCircle(u.x + i * s * .55f, u.y, s * .07f, pt(if (((t * 4f).toInt() + i) % 2 == 0) 0xFFFFE066.toInt() else 0xFFFF6A4A.toInt()))
+    }
+
     fun draw(c: Canvas) {
         val k = sc
         c.drawColor(Color.BLACK)
@@ -316,12 +404,15 @@ object Pet {
             val a = (m.life.coerceIn(0f, 1f) * 255f).toInt()
             c.drawLine(m.x, m.y, m.x - m.vx * .18f, m.y - m.vy * .18f, pt(Color.argb(a, 255, 255, 255), Paint.Style.STROKE, 2.5f * k))
         }
+        drawUfo(c)
         for (p in prints) { rf.set(p.x - 5f * k, p.y - 2f * k, p.x + 5f * k, p.y + 2f * k); c.drawOval(rf, pt(Color.argb((p.a * 90).toInt(), 30, 26, 22))) }
         val b = ball
         for (f in foods) if (f.d < pd) drawFood(c, f)
+        for (cr in crits) if (cr.d < pd) drawCrit(c, cr)
         if (b != null && b.d < pd) drawBall(c, b)
         drawPet(c)
         for (f in foods) if (f.d >= pd) drawFood(c, f)
+        for (cr in crits) if (cr.d >= pd) drawCrit(c, cr)
         if (b != null && b.d >= pd) drawBall(c, b)
         for (p in parts) {
             val a = (255f * (p.life / p.max).coerceIn(0f, 1f)).toInt()
@@ -335,8 +426,9 @@ object Pet {
         val r = W * .11f; val k = sc; val s0 = scAt(pd)
         val x = px; val y = gy - pz
         val mood = (hunger + joy + energy) / 3f
-        val sl = sleeping
+        val sl = sleeping || beh == 8
         c.save(); c.translate(x, gy); c.scale(s0, s0); c.translate(-x, -gy)
+        if (beh == 8) { rf.set(x - r * 1.5f, gy - r * .12f, x + r * 1.5f, gy + r * .3f); c.drawOval(rf, pt(Color.argb(90, 30, 26, 22))) }
         val sw = r * (.9f - pz / (300f * k)).coerceIn(.3f, .9f)
         rf.set(x - sw, gy + 4f * k - r * .2f, x + sw, gy + 4f * k + r * .2f); c.drawOval(rf, pt(Color.argb(76, 0, 0, 0)))
         if (glow > 0f) c.drawCircle(x, y - r * .9f, r * 1.5f, pt(Color.argb((glow * 45f).toInt(), 255, 224, 102)))
@@ -345,7 +437,9 @@ object Pet {
         var sq = 1f + sin(t * (if (sl) 1.5f else 3.2f)) * (if (sl) .05f else .03f)
         if (pz > 0f) sq = 1f + (pvz / (900f * k)).coerceIn(-.15f, .15f)
         c.rotate(Math.toDegrees((if (dizzy > 0f) sin(t * 14f) * .14f else if (beh == 3) sin(t * 9f) * .28f else tilt * .06f + fx * .05f).toDouble()).toFloat())
-        if (beh == 2) sq = .82f + sin(t * 2f) * .02f
+        if (beh == 2 || beh == 11) sq = .82f + sin(t * 2f) * .02f
+        if (beh == 8) sq = .8f + sin(t * 1.5f) * .04f
+        if (beh == 9) { c.translate(0f, -r * .8f); c.rotate(180f + sin(t * 12f) * 18f); c.translate(0f, r * .8f) }
         if (beh == 5) sq = .88f + abs(sin(t * 9f)) * .1f
         c.scale(1f / sq, sq)
         val green = 0xFF2F8F78.toInt()
@@ -363,7 +457,7 @@ object Pet {
         // body
         rf.set(-r * .88f, -r * 1.65f, r * .88f, -r * .05f); c.drawOval(rf, pt(Color.WHITE).also { it.shader = bodyShader })
         rf.set(-r * .5f, -r * .88f, r * .5f, -r * .12f); c.drawOval(rf, pt(Color.argb(46, 255, 255, 255)))
-        for (s in SIDES) { rf.set(s * r * .9f - r * .16f, -r * .7f - r * .1f + sin(t * 3f + s) * r * .04f, s * r * .9f + r * .16f, -r * .7f + r * .1f + sin(t * 3f + s) * r * .04f); c.drawOval(rf, pt(0xFF3AA488.toInt())) }
+        for (s in SIDES) { val ay = if (beh == 10) -r * 1.3f + sin(t * 10f + s) * r * .15f else -r * .7f + sin(t * 3f + s) * r * .04f; rf.set(s * r * .9f - r * .16f, ay - r * .1f, s * r * .9f + r * .16f, ay + r * .1f); c.drawOval(rf, pt(0xFF3AA488.toInt())) }
         if (clean < 40f) { val a = ((40f - clean) / 40f * 200f).toInt(); var j = 0; while (j < specks.size) { c.drawCircle(specks[j] * r, specks[j + 1] * r, r * .06f, pt(Color.argb(a, 70, 60, 50))); j += 2 } }
         // eyes
         val lx = look * r * .07f; val ly = if (up > 0f) -r * .09f else 0f
@@ -385,7 +479,15 @@ object Pet {
         // mouth
         val ms = r * .06f
         c.save(); c.translate(fx * r * .2f, 0f)
-        if (back) { rf.set(-r * .45f, -r * 1.35f, r * .45f, -r * .75f); c.drawOval(rf, pt(Color.argb(40, 0, 30, 20))) }
+        if (back) {
+            rf.set(-r * .62f, -r * .78f, r * .02f, -r * .12f); c.drawOval(rf, pt(0xFF84DDB5.toInt()))
+            rf.set(-r * .02f, -r * .78f, r * .62f, -r * .12f); c.drawOval(rf, pt(0xFF84DDB5.toInt()))
+            c.drawLine(0f, -r * .72f, 0f, -r * .2f, pt(0xFF3AA488.toInt(), Paint.Style.STROKE, r * .04f))
+            val wag = sin(t * (if (moving) 32f else 9f)) * (if (moving) .35f else .22f)
+            c.save(); c.translate(0f, -r * .55f); c.rotate(Math.toDegrees(wag.toDouble()).toFloat())
+            rf.set(-r * .1f, -r * .3f, r * .1f, r * .02f); c.drawOval(rf, pt(0xFFB6F5D3.toInt()))
+            c.restore()
+        }
         else if (eat > 0f) { val h = r * .06f + abs(sin(t * 14f)) * r * .1f; rf.set(-r * .14f, -r * .55f - h, r * .14f, -r * .55f + h); c.drawOval(rf, pt(ink)) }
         else if (dizzy > 0f) { path.reset(); path.moveTo(-r * .15f, -r * .55f); for (n in 1..4) path.lineTo(-r * .15f + n * r * .075f, -r * .55f + (if (n % 2 == 1) -1f else 1f) * r * .04f); c.drawPath(path, pt(ink, Paint.Style.STROKE, ms)) }
         else if (sl) c.drawCircle(0f, -r * .58f, r * .07f, pt(ink, Paint.Style.STROKE, ms))
