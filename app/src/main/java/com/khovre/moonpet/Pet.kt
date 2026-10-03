@@ -30,6 +30,14 @@ object Pet {
     private val gy: Float get() = yAt(pd)
     private val rr: Float get() = W * .11f * scAt(pd)
     private var bmp: Bitmap? = null
+    private var sprites: Bitmap? = null
+    private var animT = 0f
+    private val sPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    private val sSrc = Rect(); private val sDst = RectF()
+    private val redTint = PorterDuffColorFilter(Color.argb(95, 255, 50, 40), PorterDuff.Mode.SRC_ATOP)
+    private val FR = intArrayOf(8, 8, 10, 10, 10, 10, 10, 10, 7, 8, 8, 8, 8)
+    private val IDLE_SEQ = intArrayOf(0, 1, 2, 3, 5, 7)
+    private val SIT_SEQ = intArrayOf(0, 1, 2, 7)
 
     private var loaded = false
     private var lastTick = System.currentTimeMillis()
@@ -55,7 +63,7 @@ object Pet {
     class Part(var x: Float, var y: Float, var vx: Float, var vy: Float, val g: Float, var life: Float, val max: Float, val ch: String?, val s: Float)
     class Met(var x: Float, var y: Float, val vx: Float, val vy: Float, var life: Float) { var seen = false }
     class Print(val x: Float, val y: Float, var a: Float)
-    class Crit(var x: Float, val d: Float, val gold: Boolean) { var st = 0; var t = 0f; var dir = 0; var hx = 0f; var spd = 300f + rnd.nextFloat() * 120f; var hole: Hole? = null; var digT = 2f }
+    class Crit(var x: Float, val d: Float, val gold: Boolean) { var st = 0; var t = 0f; var dir = 0; var hx = 0f; var spd = 300f + rnd.nextFloat() * 120f; var hole: Hole? = null; var digT = 2f; var age = 0f }
     class Hole(val x: Float, val d: Float) { var age = 0f; var life = 10f; var grow = 1f }
     class Ufo(var x: Float, val y: Float, val vx: Float, val will: Boolean) { var gift = false }
     private val foods = ArrayList<Food>()
@@ -78,6 +86,7 @@ object Pet {
         lastTick = s.getLong("t", System.currentTimeMillis())
         sleeping = s.getBoolean("sl", false); gems = s.getInt("gems", 0)
         name = s.getString("name", "Blip") ?: "Blip"
+        sprites = try { c.assets.open("moon_sprites.png").use { BitmapFactory.decodeStream(it) } } catch (e: Exception) { null }
         bmp = try { c.assets.open("moon.jpg").use { BitmapFactory.decodeStream(it) } } catch (e: Exception) { null }
         catchUp()
     }
@@ -160,7 +169,7 @@ object Pet {
 
     // ---- simulation ----
     fun update(dt0: Float) {
-        val dt = min(dt0, .05f); t += dt; lastTick = System.currentTimeMillis()
+        val dt = min(dt0, .05f); t += dt; animT += dt * (if (moving && !sleeping) 7f + 4f * min(spdM, 2.5f) else 3f); lastTick = System.currentTimeMillis()
         val k = sc
         sleepBlend += ((if (sleeping || beh == 8) 1f else 0f) - sleepBlend) * min(1f, dt * 2.5f)
         nightA += ((if (sleeping) 1f else 0f) - nightA) * min(1f, dt * 2f)
@@ -204,7 +213,7 @@ object Pet {
                     if (rnd.nextFloat() < dt * 25f) parts.add(Part(px + (rnd.nextFloat() - .5f) * rr * 2f, gy, (rnd.nextFloat() - .5f) * 120f * k, -60f * k, 200f * k, .7f, .7f, null, (1.5f + rnd.nextFloat() * 2.5f) * k))
                     if (rnd.nextFloat() < dt * 2f) emoji("💢", px + (rnd.nextFloat() - .5f) * rr, gy - pz - rr * 2f, 0f, -30f * k, 1f, 24f)
                 }
-                6 -> { zt -= dt; if (zt <= 0f) { zt = .45f; tx = W * .1f + rnd.nextFloat() * W * .8f; td = rnd.nextFloat(); spdM = 3.5f } }
+                6 -> { zt -= dt; if (zt <= 0f) { zt = .45f; tx = W * .1f + rnd.nextFloat() * W * .8f; td = rnd.nextFloat(); spdM = 2.6f } }
                 7 -> { if (tx < 0f) { beh = 8; bt = 6f; act = bt } }
                 8 -> { energy = min(100f, energy + dt * 3f) }
                 9 -> { clean = max(0f, clean - dt * 12f); joy = min(100f, joy + dt * .8f); if (rnd.nextFloat() < dt * 30f) parts.add(Part(px + (rnd.nextFloat() - .5f) * rr * 2f, gy, (rnd.nextFloat() - .5f) * 80f * k, -50f * k, 180f * k, .9f, .9f, null, (1.5f + rnd.nextFloat() * 2f) * k)) }
@@ -226,18 +235,18 @@ object Pet {
             act -= dt; blink -= dt; if (blink < -.12f) blink = 2f + rnd.nextFloat() * 3f
             val f = foods.firstOrNull { it.landed }
             val b = ball
-            val cr = crits.firstOrNull { it.st == 1 || it.st == 2 || it.st == 4 }
+            val cr = crits.firstOrNull { (it.st == 1 || it.st == 2 || it.st == 4) && it.age >= .7f + 2.4f * abs(it.d - pd) }
             if (beh == 12) tx = -1f
-            else if (f != null) { tx = f.x; td = f.d; beh = 0; spdM = 1.6f }
-            else if (b != null) { tx = b.x; td = b.d; beh = 0; spdM = 1.8f }
-            else if (cr != null && dizzy <= 0f) { tx = cr.x; td = cr.d; beh = 0; spdM = 2.4f }
+            else if (f != null) { tx = f.x; td = f.d; beh = 0; spdM = 1.2f }
+            else if (b != null) { tx = b.x; td = b.d; beh = 0; spdM = 1.35f }
+            else if (cr != null && dizzy <= 0f) { tx = cr.x; td = cr.d; beh = 0; spdM = 1.8f }
             else if (act <= 0f && dizzy <= 0f) {
                 act = 1.2f + rnd.nextFloat() * 3f
                 val q = rnd.nextFloat(); spdM = 1f; beh = 0
                 val wx = W * .12f + rnd.nextFloat() * W * .76f; val wd = .05f + rnd.nextFloat() * .95f
                 if (q < .2f) { tx = wx; td = wd }
-                else if (q < .34f) { tx = wx; td = wd; spdM = 2.3f }
-                else if (q < .4f && mood > 40f && pz <= 0f) pvz = 260f * k
+                else if (q < .34f) { tx = wx; td = wd; spdM = 1.7f }
+                else if (q < .4f && mood > 40f && pz <= 0f) pvz = 210f * k
                 else if (q < .47f) { beh = 2; bt = 2f + rnd.nextFloat() * 2f; act = bt; tx = -1f }
                 else if (q < .55f && mood > 45f) { beh = 3; bt = 2.5f; act = bt; tx = -1f }
                 else if (q < .6f) { beh = 4; bt = 2f; act = bt; tx = -1f }
@@ -250,16 +259,16 @@ object Pet {
                 else tx = -1f
                 look = (rnd.nextFloat() - .5f) * 2f
             }
-            if (cr != null && beh != 12 && pz <= 0f && dizzy <= 0f && abs(cr.x - px) < 320f * k * scAt(pd) && abs(cr.d - pd) < .3f && rnd.nextFloat() < dt * 3f) pvz = 250f * k
+            if (cr != null && beh != 12 && pz <= 0f && dizzy <= 0f && abs(cr.x - px) < 320f * k * scAt(pd) && abs(cr.d - pd) < .3f && rnd.nextFloat() < dt * 2f) pvz = 190f * k
             var mvx = 0f; var mvd = 0f
             if (tx >= 0f && dizzy <= 0f) {
                 val dx = tx - px; val dd = td - pd
-                val sp = (if (energy > 20f) 130f else 60f) * k * spdM * (if (mood < 30f) .7f else 1f)
+                val sp = (if (energy > 20f) 97f else 45f) * k * spdM * (if (mood < 30f) .7f else 1f)
                 val nx = abs(dx) > 5f * k; val nd = abs(dd) > .03f
                 if (!nx && !nd) tx = -1f
                 else {
                     if (nx) { val st = sign(dx) * sp * scAt(pd) * dt; px += st; look = sign(dx); mvx = sign(dx); stepD += abs(st) }
-                    if (nd) { pd += sign(dd) * .3f * dt * (sp / (130f * k)); mvd = sign(dd) }
+                    if (nd) { pd += sign(dd) * .16f * dt * (sp / (97f * k)).coerceAtMost(1.3f); mvd = sign(dd) }
                     pd = pd.coerceIn(0f, 1f)
                     if (stepD > 26f * k * scAt(pd)) { stepD = 0f; prints.add(Print(px, gy + (if (prints.size % 2 == 0) -2f else 6f) * k * scAt(pd), 1f)); if (prints.size > 40) prints.removeAt(0) }
                 }
@@ -300,7 +309,7 @@ object Pet {
         if (critT <= 0f && crits.size < 2 && !sleeping) { critT = 7f + rnd.nextFloat() * 12f; val sx = W * .1f + rnd.nextFloat() * W * .8f; val sd = .05f + rnd.nextFloat() * .95f; crits.add(Crit(sx, sd, rnd.nextFloat() < .12f)); holes.add(Hole(sx, sd)) }
         val ci = crits.iterator()
         while (ci.hasNext()) {
-            val cr = ci.next(); cr.t += dt
+            val cr = ci.next(); cr.t += dt; cr.age += dt
             when (cr.st) {
                 0 -> { if (cr.t > .6f) { cr.st = 1; cr.t = 0f } }
                 1 -> {
@@ -469,6 +478,47 @@ object Pet {
         c.restore()
     }
 
+    private fun spr(c: Canvas, row: Int, frame: Int, s: Float, flip: Boolean) {
+        val bm = sprites ?: return
+        val f = frame.coerceIn(0, FR[row] - 1)
+        sSrc.set(f * 136, row * 116, f * 136 + 136, row * 116 + 116)
+        val w = 136f * s; val h = 116f * s
+        sDst.set(-w / 2f, -h + 2f * s, w / 2f, 2f * s)
+        if (flip) { c.save(); c.scale(-1f, 1f) }
+        c.drawBitmap(bm, sSrc, sDst, sPaint)
+        if (flip) c.restore()
+    }
+
+    private fun drawSprite(c: Canvas, r: Float, mood: Float, sl: Boolean) {
+        val s = r / 44f
+        sPaint.colorFilter = if (beh == 12) redTint else null
+        val n = animT.toInt()
+        val away = fb < -.3f
+        val side = abs(fx) > .35f
+        val right = fx > 0f
+        val fast = spdM > 1.5f
+        when {
+            beh == 12 -> spr(c, 11, 3 + n % 4, s, false)
+            dizzy > 0f -> spr(c, 11, n % 2, s, false)
+            sl -> if (sleepBlend < .55f) spr(c, 9, 3 + n % 4, s, false) else spr(c, 10, (animT * .4f).toInt() % 8, s, false)
+            beh == 2 -> spr(c, 9, SIT_SEQ[(animT * .5f).toInt() % 4], s, false)
+            eat > 0f -> spr(c, 11, 3 + (animT * 2.5f).toInt() % 2, s, false)
+            pz > 0f && side -> {
+                val ph = if (pvz > 120f * sc) 0 else if (pvz > 40f * sc) 1 else if (pvz > -40f * sc) 3 else if (pvz > -120f * sc) 4 else 5
+                spr(c, 8, ph, s, !right)
+            }
+            pz > 0f -> spr(c, if (away) 1 else 0, 5, s, false)
+            moving -> when {
+                away -> spr(c, 5, n % 10, s, false)
+                side -> spr(c, (if (fast) 6 else 2) + (if (right) 0 else 1), n % 10, s, false)
+                else -> spr(c, 4, n % 10, s, false)
+            }
+            away -> if (mood > 50f) spr(c, 12, (animT * 1.2f).toInt() % 8, s, false) else spr(c, 1, (animT * .5f).toInt() % 8, s, false)
+            else -> spr(c, 0, if (blink < 0f) 6 else IDLE_SEQ[(animT * .3f).toInt() % 6], s, false)
+        }
+        sPaint.colorFilter = null
+    }
+
     private fun drawPet(c: Canvas) {
         val r = W * .11f; val k = sc; val s0 = scAt(pd)
         val x = px; val y = gy - pz - (if (moving && pz <= 0f) abs(sin(t * 9f * min(spdM, 2f))) * r * .1f else 0f)
@@ -491,6 +541,7 @@ object Pet {
         if (beh == 9) { c.translate(0f, -r * .8f); c.rotate(180f + sin(t * 12f) * 18f); c.translate(0f, r * .8f) }
         if (beh == 5) sq = .88f + abs(sin(t * 9f)) * .1f
         c.scale(1f / sq, sq)
+        if (sprites != null) drawSprite(c, r, mood, sl) else {
         val green = 0xFF2F8F78.toInt()
         for (s in SIDES) { rf.set(s * r * .42f - r * .28f, -r * .22f, s * r * .42f + r * .28f, -r * .06f); c.drawOval(rf, pt(green)) }
         // antennae
@@ -547,6 +598,7 @@ object Pet {
         else if (mood > 60f) { rf.set(-r * .2f, -r * .82f, r * .2f, -r * .42f); c.drawArc(rf, 27f, 126f, false, pt(ink, Paint.Style.STROKE, ms)) }
         else if (mood > 35f) c.drawLine(-r * .12f, -r * .55f, r * .12f, -r * .55f, pt(ink, Paint.Style.STROKE, ms))
         else { rf.set(-r * .18f, -r * .58f, r * .18f, -r * .22f); c.drawArc(rf, 207f, 126f, false, pt(ink, Paint.Style.STROKE, ms)) }
+        }
         c.restore()
         c.restore()
         // thought bubble / zzz
