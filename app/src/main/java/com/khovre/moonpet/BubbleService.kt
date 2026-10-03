@@ -91,6 +91,9 @@ class BubbleService : Service() {
         item("🎾  Play") { Pet.play() }
         item("🫧  Groom") { Pet.groom() }
         item(if (Pet.sleeping) "☀️  Wake" else "🌙  Sleep") { Pet.toggleSleep() }
+        item("🌠  Sky show") { Pet.triggerWeather() }
+        item("🚙  Rover") { Pet.callRover() }
+        item(if (Pet.hasRock) "🪨  Take rock" else "🪨  Give rock") { Pet.toggleRock() }
         item("📊  Status") { Toast.makeText(this, Pet.status(), Toast.LENGTH_LONG).show() }
         col.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
         val mw = col.measuredWidth; val mh = col.measuredHeight

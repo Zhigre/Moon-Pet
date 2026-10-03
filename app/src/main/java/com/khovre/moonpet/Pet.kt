@@ -63,7 +63,7 @@ object Pet {
     class Part(var x: Float, var y: Float, var vx: Float, var vy: Float, val g: Float, var life: Float, val max: Float, val ch: String?, val s: Float)
     class Met(var x: Float, var y: Float, val vx: Float, val vy: Float, var life: Float) { var seen = false }
     class Print(val x: Float, val y: Float, var a: Float)
-    class Crit(var x: Float, val d: Float, val gold: Boolean) { var st = 0; var t = 0f; var dir = 0; var hx = 0f; var spd = 300f + rnd.nextFloat() * 120f; var hole: Hole? = null; var digT = 2f; var age = 0f }
+    class Crit(var x: Float, val d: Float, val gold: Boolean) { var st = 0; var t = 0f; var dir = 0; var hx = 0f; var spd = 340f + rnd.nextFloat() * 140f; var hole: Hole? = null; var digT = 2f; var age = 0f; var wt = 0f; var wv = 0f }
     class Hole(val x: Float, val d: Float) { var age = 0f; var life = 10f; var grow = 1f }
     class Ufo(var x: Float, val y: Float, val vx: Float, val will: Boolean) { var gift = false }
     private val foods = ArrayList<Food>()
@@ -75,6 +75,17 @@ object Pet {
     private val holes = ArrayList<Hole>()
     private var ufo: Ufo? = null
 
+    // ---- weather events ----
+    private var wx = 0; private var wxT = 0f; private var wxDur = 0f; private var wxNext = 75f; private var showerT = 0f
+    // ---- rover visitor ----
+    class Rover(var x: Float, val d: Float, var dir: Int) { var t = 0f; var st = 0; var stT = 0f; var scanT = 5f + rnd.nextFloat() * 6f; var wheel = 0f; var spin = 0f }
+    private var rover: Rover? = null; private var roverT = 100f; private var roverMode = 0
+    private var riding = false; private var rideT = 0f; private var rideH = 0f
+    // ---- pet rock ----
+    var hasRock = false; private var rockCarried = false; private var rockX = 0f; private var rockD = .5f
+    private var rockLost = false; private var lostT = 0f; private var lostEmote = 0f
+    val dbg = IntArray(8)
+
     // ---- persistence ----
     fun load(c: Context) {
         if (loaded) return
@@ -85,6 +96,7 @@ object Pet {
         born = s.getLong("born", System.currentTimeMillis())
         lastTick = s.getLong("t", System.currentTimeMillis())
         sleeping = s.getBoolean("sl", false); gems = s.getInt("gems", 0)
+        hasRock = s.getBoolean("rock", false); rockCarried = hasRock
         name = s.getString("name", "Blip") ?: "Blip"
         sprites = try { c.assets.open("moon_sprites.png").use { BitmapFactory.decodeStream(it) } } catch (e: Exception) { null }
         bmp = try { c.assets.open("moon.jpg").use { BitmapFactory.decodeStream(it) } } catch (e: Exception) { null }
@@ -95,7 +107,7 @@ object Pet {
         c.getSharedPreferences("pet", 0).edit()
             .putFloat("hu", hunger).putFloat("jo", joy).putFloat("en", energy).putFloat("cl", clean)
             .putLong("born", born).putLong("t", System.currentTimeMillis())
-            .putBoolean("sl", sleeping).putInt("gems", gems).putString("name", name).apply()
+            .putBoolean("sl", sleeping).putInt("gems", gems).putBoolean("rock", hasRock).putString("name", name).apply()
     }
 
     /** Time passed while the wallpaper wasn't being drawn: age the pet gently. */
@@ -153,6 +165,20 @@ object Pet {
         }
     }
     fun toggleSleep() { sleeping = !sleeping; lastCare = System.currentTimeMillis() }
+    fun triggerWeather() { if (wx == 0) startWeather(1 + rnd.nextInt(3)) }
+    fun callRover() { if (rover == null) spawnRover() }
+    fun toggleRock() { if (hasRock) takeRock() else giveRock() }
+    private fun takeRock() {
+        hasRock = false; rockCarried = false; rockLost = true; lostT = 0f; lostEmote = 4f
+        joy = max(0f, joy - 8f)
+        if (visible && !sleeping) { beh = 12; bt = 3f; act = bt; tx = -1f; emoji("😢", px, gy - rr * 2.5f, 0f, -35f * sc, 1.4f, 26f) }
+    }
+    private fun giveRock() {
+        val was = rockLost
+        hasRock = true; rockCarried = true; rockLost = false
+        joy = min(100f, joy + (if (was) 20f else 4f))
+        if (visible && !sleeping) { hearts(if (was) 6 else 2); if (pz <= 0f) pvz = 240f * sc; if (beh == 12) beh = 0 }
+    }
     fun greet() { if (sleeping) return; joy = min(100f, joy + 3f); if (pz <= 0f) pvz = 220f * sc; look = 0f; hearts(2) }
     fun tap(x: Float, y: Float) {
         if (abs(x - px) < rr * 1.1f && y > gy - pz - rr * 2.2f && y < gy + rr * .3f) pet()
@@ -201,12 +227,19 @@ object Pet {
         dizzy = max(0f, dizzy - dt); eat = max(0f, eat - dt); up = max(0f, up - dt)
         if (dizzy > 0f) beh = 0
         if (beh != 0 && !sleeping) {
-            bt -= dt; if (bt <= 0f) { if (beh == 6) { dizzy = 1.5f; tx = -1f }; beh = 0; spdM = 1f }
+            bt -= dt
+            if (bt <= 0f) {
+                if (beh == 6) { dizzy = 1.5f; tx = -1f }
+                if (beh == 13 && hasRock) { rockCarried = true; hearts(1) }
+                if (beh == 5 && !hasRock && !rockLost && rnd.nextFloat() < .4f) { hasRock = true; rockCarried = true; dbg[5]++; joy = min(100f, joy + 5f); hearts(2); emoji("🪨", px, gy - rr * 2.4f, 0f, -35f * k, 1.6f, 28f) }
+                beh = 0; spdM = 1f
+            }
             when (beh) {
                 3 -> { if (pz <= 0f && pvz <= 0f) pvz = 170f * k; joy = min(100f, joy + dt * 1f); if (rnd.nextFloat() < dt * 3f) emoji("🎵", px + (rnd.nextFloat() - .5f) * rr * 2f, gy - rr * 2f, 0f, -45f * k, 1.2f, 18f) }
                 5 -> { joy = min(100f, joy + dt * .4f); if (rnd.nextFloat() < dt * 25f) parts.add(Part(px + (rnd.nextFloat() - .5f) * rr, gy, (rnd.nextFloat() - .5f) * 70f * k, -60f * k, 200f * k, .8f, .8f, null, (1.5f + rnd.nextFloat() * 2f) * k)); if (rnd.nextFloat() < dt * .25f) { emoji("💎", px, gy - rr * 1.2f, 0f, -70f * k, 1.5f, 24f, 60f * k); joy = min(100f, joy + 5f); gems++ } }
                 2 -> { energy = min(100f, energy + dt * .3f) }
                 4 -> { up = 1f }
+                13 -> { joy = min(100f, joy + dt * .6f); if (rnd.nextFloat() < dt * 1.2f) emoji("💕", px + (rnd.nextFloat() - .5f) * rr * 1.6f, gy - rr * 2f, 0f, -40f * k, 1.2f, 20f) }
                 12 -> {
                     if (pz <= 0f && pvz <= 0f) pvz = 100f * k
                     joy = max(0f, joy - dt * 3f)
@@ -220,6 +253,15 @@ object Pet {
                 10 -> { up = 1f; if (rnd.nextFloat() < dt * 1.5f) hearts(1) }
                 11 -> { if (rnd.nextFloat() < dt * 4f) { prints.add(Print(px + (rnd.nextFloat() - .5f) * rr * 2.5f, gy + rnd.nextFloat() * 8f * k, 1f)); if (prints.size > 40) prints.removeAt(0) }; joy = max(0f, joy - dt * .5f) }
             }
+        }
+        // weather events
+        wxNext -= dt
+        if (wx == 0 && wxNext <= 0f && visible && !sleeping) startWeather(1 + rnd.nextInt(3))
+        if (wx != 0) {
+            wxT += dt
+            if (wx == 1) { showerT -= dt; if (showerT <= 0f) { showerT = .2f + rnd.nextFloat() * .35f; mets.add(mkMeteor().also { it.seen = true }) }; if (!sleeping) joy = min(100f, joy + dt * .5f) }
+            if (wx == 2 && wxT < 1.2f) shake = max(shake, .25f)
+            if (wxT >= wxDur) { wx = 0; wxNext = 150f + rnd.nextFloat() * 210f }
         }
         // meteors
         nextMeteor -= dt
@@ -236,10 +278,16 @@ object Pet {
             val f = foods.firstOrNull { it.landed }
             val b = ball
             val cr = crits.firstOrNull { (it.st == 1 || it.st == 2 || it.st == 4) && it.age >= .7f + 2.4f * abs(it.d - pd) }
+            val rov = rover
             if (beh == 12) tx = -1f
             else if (f != null) { tx = f.x; td = f.d; beh = 0; spdM = 1.2f }
             else if (b != null) { tx = b.x; td = b.d; beh = 0; spdM = 1.35f }
             else if (cr != null && dizzy <= 0f) { tx = cr.x; td = cr.d; beh = 0; spdM = 1.8f }
+            else if (rov != null && roverMode != 0 && beh == 0 && !riding && dizzy <= 0f && rov.t > 1.2f + 2f * abs(rov.d - pd)) {
+                spdM = 1.4f; td = rov.d
+                tx = if (roverMode == 1) (rov.x - rov.dir * 120f * k * scAt(rov.d)).coerceIn(30f * k, W - 30f * k) else rov.x
+            }
+            else if (hasRock && !rockCarried && beh != 13 && dizzy <= 0f) { tx = rockX; td = rockD; spdM = 1.2f }
             else if (act <= 0f && dizzy <= 0f) {
                 act = 1.2f + rnd.nextFloat() * 3f
                 val q = rnd.nextFloat(); spdM = 1f; beh = 0
@@ -256,6 +304,7 @@ object Pet {
                 else if (q < .82f) { beh = 9; bt = 3f; act = bt; tx = -1f }
                 else if (q < .87f) { beh = 10; bt = 3f; act = bt; tx = -1f }
                 else if (q < .92f && System.currentTimeMillis() - lastCare > 1_200_000L) { beh = 11; bt = 8f; act = bt; tx = -1f }
+                else if (q < .97f && hasRock && rockCarried) { beh = 13; bt = 6f; act = bt; tx = -1f; rockCarried = false; rockX = (px + (if (fx >= 0f) 1f else -1f) * rr * .9f).coerceIn(30f * k, W - 30f * k); rockD = pd; dbg[3]++ }
                 else tx = -1f
                 look = (rnd.nextFloat() - .5f) * 2f
             }
@@ -284,6 +333,10 @@ object Pet {
                 if (menuRight && px > lim) px -= 110f * k * dt else if (!menuRight && px < lim) px += 110f * k * dt
                 if ((menuRight && tx > lim) || (!menuRight && tx in 0f..lim)) tx = -1f
             }
+            if (rov != null && roverMode == 2 && !riding && beh == 0 && dizzy <= 0f && abs(rov.x - px) < rr * .6f && abs(rov.d - pd) < .1f) {
+                riding = true; rideT = 9f + rnd.nextFloat() * 5f; tx = -1f; dbg[2]++; hearts(2)
+            }
+            if (hasRock && !rockCarried && beh != 13 && abs(rockX - px) < rr * .8f && abs(rockD - pd) < .12f) { rockCarried = true; dbg[4]++; hearts(1) }
             if (f != null && abs(f.x - px) < rr * .7f && abs(f.d - pd) < .12f) {
                 foods.remove(f); hunger = min(100f, hunger + 25f); joy = min(100f, joy + 3f); eat = 1.2f; tx = -1f
                 repeat(6) { emoji("✨", px, gy - rr * .9f, (rnd.nextFloat() - .5f) * 90f * k, (-70f - rnd.nextFloat() * 50f) * k, .9f, 14f, 200f * k) }
@@ -311,12 +364,14 @@ object Pet {
         while (ci.hasNext()) {
             val cr = ci.next(); cr.t += dt; cr.age += dt
             when (cr.st) {
-                0 -> { if (cr.t > .6f) { cr.st = 1; cr.t = 0f } }
+                0 -> { if (cr.t > .25f) { cr.st = 1; cr.t = 0f; cr.wt = 0f } }
                 1 -> {
-                    cr.x += sin(t * 3f + cr.d * 10f) * 12f * k * dt
+                    cr.wt -= dt
+                    if (cr.wt <= 0f) { cr.wt = .4f + rnd.nextFloat() * 1f; cr.wv = if (rnd.nextFloat() < .2f) 0f else (rnd.nextFloat() * 2f - 1f) * 110f }
+                    cr.x = (cr.x + cr.wv * k * scAt(cr.d) * dt).coerceIn(30f * k, W - 30f * k)
                     val dxp = cr.x - px
                     if (cr.t > 8f) { cr.st = 3; cr.t = 0f }
-                    else if (!sleeping && abs(dxp) < 130f * k * scAt(cr.d) && abs(cr.d - pd) < .25f) { startFlee(cr, dxp) }
+                    else if (!sleeping && abs(dxp) < 230f * k * scAt(cr.d) && abs(cr.d - pd) < .3f) { startFlee(cr, dxp) }
                 }
                 2 -> { cr.x += sign(cr.hx - cr.x) * cr.spd * k * scAt(cr.d) * dt
                     if (abs(cr.hx - cr.x) < 8f * k || cr.t > 3.5f) beginDig(cr) }
@@ -348,6 +403,45 @@ object Pet {
             u.x += u.vx * dt
             if (u.will && !u.gift && abs(u.x - W / 2f) < 30f * k) { u.gift = true; foods.add(Food(u.x, u.y, .2f + rnd.nextFloat() * .8f)) }
             if (u.x < -80f * k || u.x > W + 80f * k) ufo = null
+        }
+        // rover visitor
+        roverT -= dt
+        if (roverT <= 0f && rover == null && !sleeping && visible) { roverT = 240f + rnd.nextFloat() * 240f; spawnRover() }
+        val rv = rover
+        if (rv != null) {
+            rv.t += dt
+            val rspd = 55f * k * scAt(rv.d)
+            if (rv.st == 0) {
+                rv.x += rv.dir * rspd * dt; rv.wheel += rspd * dt * .12f
+                rv.scanT -= dt
+                if (rv.scanT <= 0f && !riding && rv.x > W * .15f && rv.x < W * .85f) { rv.st = 1; rv.stT = 2f + rnd.nextFloat() * 1.5f }
+            } else { rv.spin += dt * 3.5f; rv.stT -= dt; if (rv.stT <= 0f) { rv.st = 0; rv.scanT = 6f + rnd.nextFloat() * 8f } }
+            if (riding) { if (rv.x < W * .18f) rv.dir = 1 else if (rv.x > W * .82f) rv.dir = -1; if (rv.st == 1) rv.st = 0 }
+            if (rv.x < -90f * k || rv.x > W + 90f * k) { rover = null; if (riding) { riding = false; rideH = 0f } }
+        }
+        if (riding) {
+            val r0 = rover
+            if (r0 == null || sleeping || dizzy > 0f || beh == 12) { riding = false; if (pz <= 0f) pvz = 180f * k }
+            else {
+                rideT -= dt
+                px = r0.x; pd = r0.d; tx = -1f
+                rideH += (26f * k - rideH) * min(1f, dt * 8f)
+                joy = min(100f, joy + dt * 1.2f)
+                if (rnd.nextFloat() < dt * .8f) hearts(1)
+                if (rideT <= 0f) { riding = false; if (pz <= 0f) pvz = 200f * k }
+            }
+        } else rideH = max(0f, rideH - dt * 200f * k)
+        // lost rock
+        if (rockLost) {
+            lostT += dt
+            joy = max(0f, joy - dt * .25f)
+            lostEmote -= dt
+            if (lostEmote <= 0f && !sleeping && visible) {
+                lostEmote = 7f + rnd.nextFloat() * 6f
+                emoji(if (rnd.nextBoolean()) "❓" else "😢", px, gy - rr * 2.5f, 0f, -35f * k, 1.4f, 24f)
+                if (dizzy <= 0f && beh == 0 && pz <= 0f) pvz = 90f * k
+            }
+            if (lostT > 900f) rockLost = false
         }
         // particles / footprints
         val pi = parts.iterator()
@@ -390,6 +484,70 @@ object Pet {
 
     private val bgPaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val srcR = Rect(); private val dstR = RectF()
+
+    private fun startWeather(kind: Int) {
+        wx = kind; wxT = 0f; showerT = 0f; dbg[0]++
+        val k = sc
+        wxDur = if (kind == 1) 16f else if (kind == 2) 5f else 18f
+        if (kind == 2) shake = max(shake, .3f)
+        if (!sleeping && dizzy <= 0f && beh != 12 && !riding) {
+            tx = -1f
+            if (kind == 2) { if (pz <= 0f) pvz = 230f * k; emoji("❗", px, gy - rr * 2.5f, 0f, -35f * k, 1.3f, 28f) }
+            else { beh = 4; bt = if (kind == 1) 9f else 12f; act = bt; emoji(if (kind == 1) "🌠" else "🌑", px, gy - rr * 2.5f, 0f, -35f * k, 1.6f, 28f) }
+        }
+    }
+
+    private fun spawnRover() {
+        val k = sc
+        val dir = if (rnd.nextBoolean()) 1 else -1
+        rover = Rover(if (dir > 0) -50f * k else W + 50f * k, .15f + rnd.nextFloat() * .8f, dir)
+        roverMode = if (rnd.nextFloat() < .3f) 0 else if (rnd.nextFloat() < .45f) 1 else 2
+        riding = false; dbg[1]++
+        if (!sleeping && visible) emoji("🚙", W * (if (dir > 0) .1f else .9f), yAt(rover!!.d) - 90f * k, 0f, -20f * k, 1.6f, 30f)
+    }
+
+    private fun drawWeatherSky(c: Canvas) {
+        if (wx != 3) return
+        val e = sin((wxT / wxDur) * 3.14159f).coerceIn(0f, 1f)
+        c.drawRect(-30f, -30f, W + 30f, hz + H * .05f, pt(Color.argb((165f * e).toInt(), 18, 3, 3)))
+        c.drawCircle(W * .5f, hz - H * .1f, W * .55f, pt(Color.argb((55f * e).toInt(), 255, 70, 20)))
+        c.drawRect(-30f, hz + H * .05f, W + 30f, H + 30f, pt(Color.argb((70f * e).toInt(), 0, 0, 0)))
+    }
+
+    private fun drawRockAt(c: Canvas, x: Float, y: Float, s: Float) {
+        val ink = 0xFF222222.toInt()
+        rf.set(x - 11f * s, y - 16f * s, x + 11f * s, y); c.drawOval(rf, pt(0xFF8D8A86.toInt()))
+        rf.set(x - 8f * s, y - 14f * s, x + 3f * s, y - 8f * s); c.drawOval(rf, pt(Color.argb(90, 255, 255, 255)))
+        c.drawCircle(x - 3.5f * s, y - 9f * s, 1.6f * s, pt(ink)); c.drawCircle(x + 3.5f * s, y - 9f * s, 1.6f * s, pt(ink))
+        rf.set(x - 3f * s, y - 8f * s, x + 3f * s, y - 3.5f * s); c.drawArc(rf, 20f, 140f, false, pt(ink, Paint.Style.STROKE, 1.1f * s))
+    }
+
+    private fun drawCarry(c: Canvas, r: Float, sl: Boolean) {
+        if (!hasRock || !rockCarried || fb < -.3f) return
+        val rx = if (sl) r * .7f else if (abs(fx) > .35f) sign(fx) * r * .62f else 0f
+        drawRockAt(c, rx, -r * .02f, r / 44f * .75f)
+    }
+
+    private fun drawRover(c: Canvas, rv: Rover) {
+        val s = sc * scAt(rv.d); val g0 = yAt(rv.d)
+        val dark = 0xFF2A2A2E.toInt(); val steel = 0xFF8A8F98.toInt()
+        c.save(); c.translate(rv.x, g0); if (rv.dir < 0) c.scale(-1f, 1f)
+        rf.set(-34f * s, -3f * s, 34f * s, 5f * s); c.drawOval(rf, pt(Color.argb(80, 0, 0, 0)))
+        for (wxp in floatArrayOf(-24f, 0f, 24f)) {
+            c.drawCircle(wxp * s, -8f * s, 8f * s, pt(dark)); c.drawCircle(wxp * s, -8f * s, 4.2f * s, pt(steel))
+            c.drawLine(wxp * s, -8f * s, wxp * s + cos(rv.wheel) * 4f * s, -8f * s + sin(rv.wheel) * 4f * s, pt(dark, Paint.Style.STROKE, 1.4f * s))
+        }
+        c.drawRect(-30f * s, -26f * s, 30f * s, -12f * s, pt(0xFFD7DBE0.toInt()))
+        c.drawRect(-30f * s, -17f * s, 30f * s, -15f * s, pt(0xFFB4B9C2.toInt()))
+        c.drawRect(-24f * s, -34f * s, 2f * s, -27f * s, pt(0xFF3E5C9A.toInt()))
+        c.drawLine(-11f * s, -34f * s, -11f * s, -27f * s, pt(0xFF9DB6E8.toInt(), Paint.Style.STROKE, 1f * s))
+        c.drawLine(14f * s, -26f * s, 14f * s, -41f * s, pt(steel, Paint.Style.STROKE, 1.6f * s))
+        val dw = abs(cos(rv.spin)) * 7f * s + 1.5f * s
+        rf.set(14f * s - dw, -47f * s, 14f * s + dw, -41f * s); c.drawOval(rf, pt(0xFFEDEFF2.toInt()))
+        c.drawCircle(26f * s, -22f * s, 3f * s, pt(dark)); c.drawCircle(26.8f * s, -22.6f * s, 1f * s, pt(Color.WHITE))
+        if ((t * 2f).toInt() % 2 == 0) c.drawCircle(-26f * s, -24f * s, 1.8f * s, pt(0xFFFF5A4A.toInt()))
+        c.restore()
+    }
 
     private fun drawFood(c: Canvas, f: Food) {
         val k = sc * scAt(f.d)
@@ -455,6 +613,7 @@ object Pet {
             srcR.set(sx, 0, sx + vis, bm.height); dstR.set(-30f, -30f, W + 30f, H + 30f)
             c.drawBitmap(bm, srcR, dstR, bgPaint)
         }
+        drawWeatherSky(c)
         for (m in mets) {
             val a = (m.life.coerceIn(0f, 1f) * 255f).toInt()
             c.drawLine(m.x, m.y, m.x - m.vx * .18f, m.y - m.vy * .18f, pt(Color.argb(a, 255, 255, 255), Paint.Style.STROKE, 2.5f * k))
@@ -466,7 +625,12 @@ object Pet {
         for (f in foods) if (f.d < pd) drawFood(c, f)
         for (cr in crits) if (cr.d < pd) drawCrit(c, cr)
         if (b != null && b.d < pd) drawBall(c, b)
+        val rvr = rover
+        if (rvr != null && (rvr.d < pd || riding)) drawRover(c, rvr)
+        if (hasRock && !rockCarried && rockD < pd) drawRockAt(c, rockX, yAt(rockD), sc * scAt(rockD) * 1.1f)
         drawPet(c)
+        if (rvr != null && rvr.d >= pd && !riding) drawRover(c, rvr)
+        if (hasRock && !rockCarried && rockD >= pd) drawRockAt(c, rockX, yAt(rockD), sc * scAt(rockD) * 1.1f)
         for (f in foods) if (f.d >= pd) drawFood(c, f)
         for (cr in crits) if (cr.d >= pd) drawCrit(c, cr)
         if (b != null && b.d >= pd) drawBall(c, b)
@@ -474,6 +638,7 @@ object Pet {
             val a = (255f * (p.life / p.max).coerceIn(0f, 1f)).toInt()
             if (p.ch != null) txt(c, p.ch, p.x, p.y, p.s * k, a) else c.drawCircle(p.x, p.y, p.s, pt(Color.argb(a, 184, 175, 162)))
         }
+        if (wx == 2) c.drawColor(Color.argb((min(1f, wxT / .12f) * exp(-wxT * .55f) * 170f).toInt().coerceIn(0, 255), 255, 200, 110))
         if (nightA > .01f) c.drawColor(Color.argb((128f * nightA).toInt(), 0, 6, 30))
         c.restore()
     }
@@ -500,8 +665,9 @@ object Pet {
         when {
             beh == 12 -> spr(c, 11, 3 + n % 4, s, false)
             dizzy > 0f -> spr(c, 11, n % 2, s, false)
+            riding -> spr(c, 9, SIT_SEQ[(animT * .5f).toInt() % 4], s, false)
             sl -> if (sleepBlend < .55f) spr(c, 9, 3 + n % 4, s, false) else spr(c, 10, (animT * .4f).toInt() % 8, s, false)
-            beh == 2 -> spr(c, 9, SIT_SEQ[(animT * .5f).toInt() % 4], s, false)
+            beh == 2 || beh == 13 -> spr(c, 9, SIT_SEQ[(animT * .5f).toInt() % 4], s, false)
             eat > 0f -> spr(c, 11, 3 + (animT * 2.5f).toInt() % 2, s, false)
             pz > 0f && side -> {
                 val ph = if (pvz > 120f * sc) 0 else if (pvz > 40f * sc) 1 else if (pvz > -40f * sc) 3 else if (pvz > -120f * sc) 4 else 5
@@ -521,7 +687,7 @@ object Pet {
 
     private fun drawPet(c: Canvas) {
         val r = W * .11f; val k = sc; val s0 = scAt(pd)
-        val x = px; val y = gy - pz - (if (moving && pz <= 0f) abs(sin(t * 9f * min(spdM, 2f))) * r * .1f else 0f)
+        val x = px; val y = gy - pz - rideH - (if (moving && pz <= 0f) abs(sin(t * 9f * min(spdM, 2f))) * r * .1f else 0f)
         val mood = (hunger + joy + energy) / 3f
         val sl = sleeping || beh == 8
         c.save(); c.translate(x, gy); c.scale(s0, s0); c.translate(-x, -gy)
@@ -541,7 +707,7 @@ object Pet {
         if (beh == 9) { c.translate(0f, -r * .8f); c.rotate(180f + sin(t * 12f) * 18f); c.translate(0f, r * .8f) }
         if (beh == 5) sq = .88f + abs(sin(t * 9f)) * .1f
         c.scale(1f / sq, sq)
-        if (sprites != null) drawSprite(c, r, mood, sl) else {
+        if (sprites != null) { drawSprite(c, r, mood, sl); drawCarry(c, r, sl) } else {
         val green = 0xFF2F8F78.toInt()
         for (s in SIDES) { rf.set(s * r * .42f - r * .28f, -r * .22f, s * r * .42f + r * .28f, -r * .06f); c.drawOval(rf, pt(green)) }
         // antennae
