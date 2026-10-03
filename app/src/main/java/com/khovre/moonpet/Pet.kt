@@ -598,8 +598,8 @@ object Pet {
         else if (mood > 60f) { rf.set(-r * .2f, -r * .82f, r * .2f, -r * .42f); c.drawArc(rf, 27f, 126f, false, pt(ink, Paint.Style.STROKE, ms)) }
         else if (mood > 35f) c.drawLine(-r * .12f, -r * .55f, r * .12f, -r * .55f, pt(ink, Paint.Style.STROKE, ms))
         else { rf.set(-r * .18f, -r * .58f, r * .18f, -r * .22f); c.drawArc(rf, 207f, 126f, false, pt(ink, Paint.Style.STROKE, ms)) }
-        }
         c.restore()
+        }
         c.restore()
         // thought bubble / zzz
         if (!sl && dizzy <= 0f) {

@@ -89,8 +89,16 @@ class MoonWallpaperService : WallpaperService() {
                 if (c != null) {
                     val now = System.nanoTime()
                     if (now - powerAt > 5_000_000_000L) { powerAt = now; readPower() }
-                    Pet.update((now - last) / 1e9f); last = now
-                    Pet.draw(c)
+                    try {
+                        Pet.update((now - last) / 1e9f); last = now
+                        Pet.draw(c)
+                    } catch (e: Throwable) {
+                        last = now
+                        c.drawColor(android.graphics.Color.BLACK)
+                        val p = android.graphics.Paint().apply { color = android.graphics.Color.WHITE; textSize = 34f }
+                        c.drawText("Moonlet error: " + (e.javaClass.simpleName + " " + (e.message ?: "")).take(48), 20f, 300f, p)
+                        e.stackTrace.take(6).forEachIndexed { i, el -> c.drawText("${el.fileName}:${el.lineNumber} ${el.methodName}".take(54), 20f, 350f + i * 44f, p) }
+                    }
                 }
             } finally {
                 if (c != null) try { sh.unlockCanvasAndPost(c) } catch (e: Exception) {}
