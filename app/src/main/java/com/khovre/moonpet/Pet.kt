@@ -36,7 +36,7 @@ object Pet {
     private val sSrc = Rect(); private val sDst = RectF()
     private val redTint = PorterDuffColorFilter(Color.argb(95, 255, 50, 40), PorterDuff.Mode.SRC_ATOP)
     private val FR = intArrayOf(8, 8, 10, 10, 10, 10, 10, 10, 7, 8, 8, 8, 8)
-    private val IDLE_SEQ = intArrayOf(0, 1, 2, 3, 5, 7)
+    private val IDLE_SEQ = intArrayOf(0, 1, 2, 3, 5, 7, 5, 3, 2, 1)
     private val SIT_SEQ = intArrayOf(0, 1, 2, 7)
 
     private var loaded = false
@@ -52,7 +52,7 @@ object Pet {
     var menuOpen = false; var menuRight = true
     private var sleepBlend = 0f; private var nightA = 0f
     private var lastCare = System.currentTimeMillis()
-    private var pd = .6f; private var td = -1f; private var fx = 0f; private var fb = 1f
+    private var pd = .6f; private var td = -1f; private var fx = 0f; private var fb = 1f; private var mvx = 0f; private var mvd = 0f
     private var tx = -1f; private var act = 2f; private var blink = 3f
     private var look = 0f; private var up = 0f; private var dizzy = 0f; private var eat = 0f; private var stepD = 0f
     private var glow = 0f; private var hourT = 0f; private var lastHour = -1; private var night = false
@@ -309,7 +309,7 @@ object Pet {
                 look = (rnd.nextFloat() - .5f) * 2f
             }
             if (cr != null && beh != 12 && pz <= 0f && dizzy <= 0f && abs(cr.x - px) < 320f * k * scAt(pd) && abs(cr.d - pd) < .3f && rnd.nextFloat() < dt * 2f) pvz = 190f * k
-            var mvx = 0f; var mvd = 0f
+            mvx = 0f; mvd = 0f
             if (tx >= 0f && dizzy <= 0f) {
                 val dx = tx - px; val dd = td - pd
                 val sp = (if (energy > 20f) 97f else 45f) * k * spdM * (if (mood < 30f) .7f else 1f)
@@ -524,7 +524,9 @@ object Pet {
 
     private fun drawCarry(c: Canvas, r: Float, sl: Boolean) {
         if (!hasRock || !rockCarried || fb < -.3f) return
-        val rx = if (sl) r * .7f else if (abs(fx) > .35f) sign(fx) * r * .62f else 0f
+        val side = abs(mvx) > 0f || abs(fx) > .25f
+        val right = if (abs(mvx) > 0f) mvx > 0f else fx >= 0f
+        val rx = if (sl) r * .7f else if (side) (if (right) 1f else -1f) * r * .62f else 0f
         drawRockAt(c, rx, -r * .02f, r / 44f * .75f)
     }
 
@@ -648,7 +650,7 @@ object Pet {
         val f = frame.coerceIn(0, FR[row] - 1)
         sSrc.set(f * 136, row * 116, f * 136 + 136, row * 116 + 116)
         val w = 136f * s; val h = 116f * s
-        sDst.set(-w / 2f, -h + 2f * s, w / 2f, 2f * s)
+        sDst.set(-w / 2f, -113f * s, w / 2f, (116f - 113f) * s)
         if (flip) { c.save(); c.scale(-1f, 1f) }
         c.drawBitmap(bm, sSrc, sDst, sPaint)
         if (flip) c.restore()
@@ -659,35 +661,52 @@ object Pet {
         sPaint.colorFilter = if (beh == 12) redTint else null
         val n = animT.toInt()
         val away = fb < -.3f
-        val side = abs(fx) > .35f
-        val right = fx > 0f
+        val side = abs(mvx) > 0f || abs(fx) > .25f
+        val right = if (abs(mvx) > 0f) mvx > 0f else fx >= 0f
         val fast = spdM > 1.5f
         when {
-            beh == 12 -> spr(c, 11, 3 + n % 4, s, false)
+            beh == 12 -> spr(c, 11, 2 + n % 6, s, false)
             dizzy > 0f -> spr(c, 11, n % 2, s, false)
             riding -> spr(c, 9, SIT_SEQ[(animT * .5f).toInt() % 4], s, false)
-            sl -> if (sleepBlend < .55f) spr(c, 9, 3 + n % 4, s, false) else spr(c, 10, (animT * .4f).toInt() % 8, s, false)
+            sl -> {
+                if (sleepBlend < .9f) {
+                    val sitF = (sleepBlend / .9f * 7f).toInt().coerceIn(0, 7)
+                    spr(c, 9, sitF, s, false)
+                } else {
+                    spr(c, 10, (animT * .5f).toInt() % 8, s, false)
+                }
+            }
             beh == 2 || beh == 13 -> spr(c, 9, SIT_SEQ[(animT * .5f).toInt() % 4], s, false)
-            eat > 0f -> spr(c, 11, 3 + (animT * 2.5f).toInt() % 2, s, false)
-            pz > 0f && side -> {
-                val ph = if (pvz > 120f * sc) 0 else if (pvz > 40f * sc) 1 else if (pvz > -40f * sc) 3 else if (pvz > -120f * sc) 4 else 5
+            beh == 9 -> spr(c, 9, 3 + (n % 4), s, false)
+            eat > 0f -> spr(c, 11, 2 + (animT * 2.5f).toInt() % 2, s, false)
+            pz > 0f -> {
+                val ph = when {
+                    pvz > 140f * sc -> 0
+                    pvz > 40f * sc -> 1
+                    abs(pvz) <= 40f * sc -> 2
+                    pvz > -120f * sc -> 3
+                    pz > 15f * sc -> 4
+                    pvz < -40f * sc -> 5
+                    else -> 6
+                }
                 spr(c, 8, ph, s, !right)
             }
-            pz > 0f -> spr(c, if (away) 1 else 0, 5, s, false)
             moving -> when {
                 away -> spr(c, 5, n % 10, s, false)
                 side -> spr(c, (if (fast) 6 else 2) + (if (right) 0 else 1), n % 10, s, false)
                 else -> spr(c, 4, n % 10, s, false)
             }
             away -> if (mood > 50f) spr(c, 12, (animT * 1.2f).toInt() % 8, s, false) else spr(c, 1, (animT * .5f).toInt() % 8, s, false)
-            else -> spr(c, 0, if (blink < 0f) 6 else IDLE_SEQ[(animT * .3f).toInt() % 6], s, false)
+            else -> spr(c, 0, if (blink < 0f) 6 else IDLE_SEQ[(animT * .8f).toInt() % IDLE_SEQ.size], s, false)
         }
         sPaint.colorFilter = null
     }
 
     private fun drawPet(c: Canvas) {
         val r = W * .11f; val k = sc; val s0 = scAt(pd)
-        val x = px; val y = gy - pz - rideH - (if (moving && pz <= 0f) abs(sin(t * 9f * min(spdM, 2f))) * r * .1f else 0f)
+        val hasSprites = sprites != null
+        val bounce = if (!hasSprites && moving && pz <= 0f) abs(sin(t * 9f * min(spdM, 2f))) * r * .1f else 0f
+        val x = px; val y = gy - pz - rideH - bounce
         val mood = (hunger + joy + energy) / 3f
         val sl = sleeping || beh == 8
         c.save(); c.translate(x, gy); c.scale(s0, s0); c.translate(-x, -gy)
@@ -697,17 +716,28 @@ object Pet {
         if (glow > 0f) c.drawCircle(x, y - r * .9f, r * 1.5f, pt(Color.argb((glow * 45f).toInt(), 255, 224, 102)))
         val shiver = if (battery < 15 && !charging && !sl) sin(t * 40f) * 1.5f * k else 0f
         c.save(); c.translate(x + shiver, y)
-        var sq = 1f + sin(t * (if (sl) 1.5f else 3.2f)) * (if (sl) .05f else .03f)
-        if (pz > 0f) sq = 1f + (pvz / (900f * k)).coerceIn(-.15f, .15f)
-        else if (moving) sq = 1f + sin(t * 12f * min(spdM, 2f)) * .07f
-        sq *= 1f - sleepBlend * .1f
-        c.rotate(Math.toDegrees((if (dizzy > 0f) sin(t * 14f) * .14f else if (beh == 3) sin(t * 9f) * .28f else if (beh == 12) sin(t * 30f) * .12f else tilt * .06f + fx * .05f).toDouble()).toFloat())
-        if (beh == 2 || beh == 11) sq = .82f + sin(t * 2f) * .02f
-        if (beh == 8) sq = .8f + sin(t * 1.5f) * .04f
-        if (beh == 9) { c.translate(0f, -r * .8f); c.rotate(180f + sin(t * 12f) * 18f); c.translate(0f, r * .8f) }
-        if (beh == 5) sq = .88f + abs(sin(t * 9f)) * .1f
-        c.scale(1f / sq, sq)
-        if (sprites != null) { drawSprite(c, r, mood, sl); drawCarry(c, r, sl) } else {
+        if (hasSprites) {
+            val rotAngle = when {
+                dizzy > 0f -> sin(t * 14f) * .12f
+                beh == 3 -> sin(t * 9f) * .18f
+                beh == 12 -> sin(t * 24f) * .05f
+                beh == 9 -> sin(t * 12f) * .15f
+                else -> tilt * .05f + fx * .03f
+            }
+            c.rotate(Math.toDegrees(rotAngle.toDouble()).toFloat())
+            drawSprite(c, r, mood, sl)
+            drawCarry(c, r, sl)
+        } else {
+            var sq = 1f + sin(t * (if (sl) 1.5f else 3.2f)) * (if (sl) .05f else .03f)
+            if (pz > 0f) sq = 1f + (pvz / (900f * k)).coerceIn(-.15f, .15f)
+            else if (moving) sq = 1f + sin(t * 12f * min(spdM, 2f)) * .07f
+            sq *= 1f - sleepBlend * .1f
+            c.rotate(Math.toDegrees((if (dizzy > 0f) sin(t * 14f) * .14f else if (beh == 3) sin(t * 9f) * .28f else if (beh == 12) sin(t * 30f) * .12f else tilt * .06f + fx * .05f).toDouble()).toFloat())
+            if (beh == 2 || beh == 11) sq = .82f + sin(t * 2f) * .02f
+            if (beh == 8) sq = .8f + sin(t * 1.5f) * .04f
+            if (beh == 9) { c.translate(0f, -r * .8f); c.rotate(180f + sin(t * 12f) * 18f); c.translate(0f, r * .8f) }
+            if (beh == 5) sq = .88f + abs(sin(t * 9f)) * .1f
+            c.scale(1f / sq, sq)
         val green = 0xFF2F8F78.toInt()
         for (s in SIDES) { rf.set(s * r * .42f - r * .28f, -r * .22f, s * r * .42f + r * .28f, -r * .06f); c.drawOval(rf, pt(green)) }
         // antennae
